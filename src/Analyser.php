@@ -112,9 +112,6 @@ namespace SebastianBergmann\PHPLOC
           'testClasses'                 => 0,
           'testMethods'                 => 0,
           'ccnByLloc'                   => 0,
-          'ccnByNom'                    => 0,
-          'llocByNoc'                   => 0,
-          'llocByNom'                   => 0,
           'llocByNof'                   => 0,
           'methodCalls'                 => 0,
           'staticMethodCalls'           => 0,
@@ -146,6 +143,26 @@ namespace SebastianBergmann\PHPLOC
           '$HTTP_SERVER_VARS' => TRUE,
           '$HTTP_POST_FILES' => TRUE
         );
+
+        /**
+         * @var array
+         */
+        private $classCcn = array();
+
+        /**
+         * @var array
+         */
+        private $classLloc = array();
+
+        /**
+         * @var array
+         */
+        private $methodCcn = array();
+
+        /**
+         * @var array
+         */
+        private $methodLloc = array();
 
         /**
          * Processes a set of files.
@@ -208,18 +225,28 @@ namespace SebastianBergmann\PHPLOC
                 $count['ccnByLloc'] = $count['ccn'] / $count['lloc'];
             }
 
-            if ($count['methods'] > 0) {
-                $count['ccnByNom'] = ($count['methods'] +
-                                      $count['ccnMethods']) /
-                                     $count['methods'];
+            if (count($this->classCcn) > 0) {
+                $count['classCcnMin'] = min($this->classCcn);
+                $count['classCcnAvg'] = array_sum($this->classCcn) / count($this->classCcn);
+                $count['classCcnMax'] = max($this->classCcn);
             }
 
-            if ($count['classes'] > 0) {
-                $count['llocByNoc'] = $count['llocClasses'] / $count['classes'];
+            if (count($this->methodCcn) > 0) {
+                $count['methodCcnMin'] = min($this->methodCcn);
+                $count['methodCcnAvg'] = array_sum($this->methodCcn) / count($this->methodCcn);
+                $count['methodCcnMax'] = max($this->methodCcn);
             }
 
-            if ($count['methods'] > 0) {
-                $count['llocByNom'] = $count['llocClasses'] / $count['methods'];
+            if (count($this->classLloc) > 0) {
+                $count['classLlocMin'] = min($this->classLloc);
+                $count['classLlocAvg'] = array_sum($this->classLloc) / count($this->classLloc);
+                $count['classLlocMax'] = max($this->classLloc);
+            }
+
+            if (count($this->methodLloc) > 0) {
+                $count['methodLlocMin'] = min($this->methodLloc);
+                $count['methodLlocAvg'] = array_sum($this->methodLloc) / count($this->methodLloc);
+                $count['methodLlocMax'] = max($this->methodLloc);
             }
 
             if ($count['functions'] > 0) {
@@ -292,12 +319,14 @@ namespace SebastianBergmann\PHPLOC
 
             $this->count['files']++;
 
-            $blocks       = array();
-            $currentBlock = FALSE;
-            $namespace    = FALSE;
-            $className    = NULL;
-            $functionName = NULL;
-            $testClass    = FALSE;
+            $blocks            = array();
+            $currentBlock      = FALSE;
+            $namespace         = FALSE;
+            $className         = NULL;
+            $functionName      = NULL;
+            $testClass         = FALSE;
+            $currentClassData  = NULL;
+            $currentMethodData = NULL;
 
             for ($i = 0; $i < $numTokens; $i++) {
                 if (is_string($tokens[$i])) {
@@ -306,6 +335,11 @@ namespace SebastianBergmann\PHPLOC
                     if ($token == ';') {
                         if ($className !== NULL && !$testClass) {
                             $this->count['llocClasses']++;
+                            $currentClassData['lloc']++;
+
+                            if ($functionName !== NULL) {
+                                $currentMethodData['lloc']++;
+                            }
                         }
 
                         else if ($functionName !== NULL) {
@@ -318,6 +352,8 @@ namespace SebastianBergmann\PHPLOC
                     else if ($token == '?' && !$testClass) {
                         if ($className !== NULL) {
                             $this->count['ccnMethods']++;
+                            $currentClassData['ccn']++;
+                            $currentMethodData['ccn']++;
                         }
 
                         $this->count['ccn']++;
@@ -347,11 +383,20 @@ namespace SebastianBergmann\PHPLOC
                         if ($block !== FALSE && $block !== NULL) {
                             if ($block == $functionName) {
                                 $functionName = NULL;
+
+                                if ($currentMethodData !== NULL) {
+                                    $this->methodCcn[] = $currentMethodData['ccn'];
+                                    $this->methodLloc[] = $currentMethodData['lloc'];
+                                    $currentMethodData = NULL;
+                                }
                             }
 
                             else if ($block == $className) {
-                                $className = NULL;
-                                $testClass = FALSE;
+                                $className         = NULL;
+                                $testClass         = FALSE;
+                                $this->classCcn[]  = $currentClassData['ccn'];
+                                $this->classLloc[] = $currentClassData['lloc'];
+                                $currentClassData  = NULL;
                             }
                         }
                     }
@@ -378,10 +423,11 @@ namespace SebastianBergmann\PHPLOC
                             continue;
                         }
 
-                        $className    = $this->getClassName(
-                                          $namespace, $tokens, $i
-                                        );
-                        $currentBlock = T_CLASS;
+                        $currentClassData = array('ccn' => 1, 'lloc' => 0);
+                        $className        = $this->getClassName(
+                                                $namespace, $tokens, $i
+                                            );
+                        $currentBlock     = T_CLASS;
 
                         if ($token == T_TRAIT) {
                             $this->count['traits']++;
@@ -473,6 +519,8 @@ namespace SebastianBergmann\PHPLOC
                                 }
 
                                 else if (!$testClass) {
+                                    $currentMethodData = array('ccn' => 1, 'lloc' => 0);
+
                                     if (!$static) {
                                         $this->count['nonStaticMethods']++;
                                     } else {
@@ -516,8 +564,10 @@ namespace SebastianBergmann\PHPLOC
                     case T_BOOLEAN_OR:
                     case T_LOGICAL_OR: {
                         if (!$testClass) {
-                            if ($className !== NULL) {
+                            if ($currentMethodData !== NULL) {
                                 $this->count['ccnMethods']++;
+                                $currentClassData['ccn']++;
+                                $currentMethodData['ccn']++;
                             }
 
                             $this->count['ccn']++;
@@ -680,16 +730,22 @@ namespace SebastianBergmann\PHPLOC
         {
             $parent = $this->classes[$className];
             $result = FALSE;
-
+            $count = 0;
+            
             // Check ancestry for PHPUnit_Framework_TestCase.
             while ($parent !== NULL) {
+                $count++;
+                if ($count > 100) {
+                    // Prevent infinite loops and just bail
+                    break;
+                }
                 if ($parent == 'PHPUnit_Framework_TestCase' ||
                     $parent == '\\PHPUnit_Framework_TestCase') {
                     $result = TRUE;
                     break;
                 }
 
-                if (isset($this->classes[$parent])) {
+                if (isset($this->classes[$parent]) && $parent !== $this->classes[$parent]) {
                     $parent = $this->classes[$parent];
                 }
 
@@ -781,7 +837,12 @@ namespace SebastianBergmann\PHPLOC
             return FALSE;
         }
 
-        private function isClassDeclaration($tokens, $i)
+        /**
+         * @param  array   $tokens
+         * @param  integer $i
+         * @return boolean
+         */
+        private function isClassDeclaration(array $tokens, $i)
         {
             $n = $this->getPreviousNonWhitespaceTokenPos($tokens, $i);
 
